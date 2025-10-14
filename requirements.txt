@@ -1,0 +1,18 @@
+# ---- Core PyTorch stack ----
+torch==2.5.1+cu121
+torchvision==0.20.1+cu121
+--extra-index-url https://download.pytorch.org/whl/cu121
+
+# ---- CUDA extension dependencies ----
+ninja
+setuptools
+wheel
+
+# ---- Tiny CUDA NN (requires CUDA & GCC loaded before install) ----
+git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
+
+# ---- Common utilities ----
+pillow
+pyyaml
+pytorch-msssim
+lpips
