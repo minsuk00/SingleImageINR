@@ -37,48 +37,50 @@ def apply_translation(img, dx, dy):
 # --------------------------------------------------------
 # Noise augmentations
 # --------------------------------------------------------
-def add_gaussian(img, sigma):
+def add_gaussian(img, sigma, mean=0.0):
+    """
+    Additive Gaussian noise.
+    Allows non-zero mean to simulate bias (e.g. electronic baseline drift).
+    """
     if sigma <= 0:
         return img
-    noise = torch.randn_like(img) * sigma
+    noise = torch.randn_like(img) * sigma + mean
     return torch.clamp(img + noise, 0.0, 1.0)
 
 
-def add_speckle(img, sigma):
+def add_speckle(img, sigma, mean=0.0):
     """
-    Bright areas get stronger fluctuations, dark areas barely change.
-    CT - how many X-ray photons make it through the body and reach the detector. -> Follow Poisson
+    Multiplicative (signal-dependent) noise.
+    Bright areas fluctuate more strongly.
     """
     if sigma <= 0:
         return img
-    noise = torch.randn_like(img) * sigma
+    noise = torch.randn_like(img) * sigma + mean  # non-zero mean possible
     return torch.clamp(img * (1.0 + noise), 0.0, 1.0)
 
 
-def add_poisson(img, scale=1.0):
+def add_poisson(img, scale=1.0, bias=0.0):
     """
-    Simulate photon shot noise (Poisson).
-    Physically realistic for CT / low-light photon counting.
-    scale controls photon count range.
+    Poisson (shot) noise with optional bias.
+    The bias term simulates uneven illumination or detector offset.
     """
     if scale <= 0:
         return img
-    # Ensure image in [0,1], scale up to photon counts
-    noisy = torch.poisson(img * scale) / scale
-    return torch.clamp(noisy, 0.0, 1.0)
+    noisy = torch.poisson(torch.clamp(img * scale, 0, None)) / scale
+    return torch.clamp(noisy + bias, 0.0, 1.0)
 
 
-def add_salt_pepper(img, prob=0.05):
+def add_salt_pepper(img, prob=0.05, low_val=0.0, high_val=1.0):
     """
-    Randomly replaces pixels with 0 or 1.
-    prob: probability of any pixel being corrupted.
+    Impulsive noise (salt & pepper).
+    Can be asymmetric if low_val != 0 or high_val != 1.
     """
     if prob <= 0:
         return img
     mask = torch.rand_like(img)
     I_noisy = img.clone()
-    I_noisy[mask < prob / 2] = 0.0  # pepper
-    I_noisy[mask > 1 - prob / 2] = 1.0  # salt
+    I_noisy[mask < prob / 2] = low_val
+    I_noisy[mask > 1 - prob / 2] = high_val
     return I_noisy
 
 
@@ -89,27 +91,39 @@ def sample_augmentation(cfg, clean_img):
     """
     Returns: I_aug [1,1,H,W] in [0,1]
     """
-    pT = cfg["augment"]["prob_translation"]
-    pG = cfg["augment"]["prob_gaussian"]
-    pS = cfg["augment"]["prob_speckle"]
-    pP = cfg["augment"]["prob_poisson"]
-    pSP = cfg["augment"]["prob_saltpepper"]
-
+    aug_cfg = cfg["augment"]
     new_img = clean_img
 
     # translation
-    if random.random() < pT:
-        dx, dy = _rand_trans(cfg["augment"]["translation_px_max"])
+    if random.random() < aug_cfg["prob_translation"]:
+        dx, dy = _rand_trans(aug_cfg["translation_px_max"])
         new_img = apply_translation(new_img, dx, dy)
 
     # noises
-    if random.random() < pG:
-        new_img = add_gaussian(new_img, cfg["augment"]["gaussian_sigma"])
-    if random.random() < pS:
-        new_img = add_speckle(new_img, cfg["augment"]["speckle_sigma"])
-    if random.random() < pP:
-        new_img = add_poisson(new_img, cfg["augment"]["poisson_scale"])
-    if random.random() < pSP:
-        new_img = add_salt_pepper(new_img, cfg["augment"]["saltpepper_prob"])
+    if random.random() < aug_cfg["prob_gaussian"]:
+        new_img = add_gaussian(
+            new_img,
+            sigma=aug_cfg["gaussian_sigma"],
+            mean=aug_cfg.get("gaussian_mean", 0.0),
+        )
+    if random.random() < aug_cfg["prob_speckle"]:
+        new_img = add_speckle(
+            new_img,
+            sigma=aug_cfg["speckle_sigma"],
+            mean=aug_cfg.get("speckle_mean", 0.0),
+        )
+    if random.random() < aug_cfg["prob_poisson"]:
+        new_img = add_poisson(
+            new_img,
+            scale=aug_cfg["poisson_scale"],
+            bias=aug_cfg.get("poisson_bias", 0.0),
+        )
+    if random.random() < aug_cfg["prob_saltpepper"]:
+        new_img = add_salt_pepper(
+            new_img,
+            prob=aug_cfg["saltpepper_prob"],
+            low_val=aug_cfg.get("saltpepper_low", 0.0),
+            high_val=aug_cfg.get("saltpepper_high", 1.0),
+        )
 
     return new_img

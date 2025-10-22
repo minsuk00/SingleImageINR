@@ -4,3 +4,4 @@ wandb/
 runs/
 
 NOTE.md
+*.tar

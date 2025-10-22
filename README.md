@@ -13,4 +13,7 @@ conda activate sio
 module load cuda/12.1.1 gcc/11.2.0
 pip install --upgrade pip
 pip install -r requirements.txt
+
+# download CheSS weight and place in project root
+# https://github.com/mi2rl/CheSS
 ```
