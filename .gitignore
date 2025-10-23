@@ -2,6 +2,7 @@ __pycache__/
 data/
 wandb/
 runs/
+config/
 
 NOTE.md
 *.tar

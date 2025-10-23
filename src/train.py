@@ -5,7 +5,7 @@ from datetime import datetime
 import torch
 import yaml
 
-# import wandb
+import wandb
 from aug import sample_augmentation
 from losses import LossBundle
 from models import build_model
@@ -18,11 +18,11 @@ def main(cfg):
     set_seed(cfg["seed"])
 
     # --- W&B Initialization ---
-    # timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    # run_name = f"{cfg['exp_name']}_{timestamp}"
-    # wandb.init(
-    #     project=cfg.get("wandb_project", "inir-project"), name=run_name, config=cfg
-    # )
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    run_name = f"{cfg['exp_name']}_{timestamp}"
+    wandb.init(
+        project=cfg.get("wandb_project", "inir-project"), name=run_name, config=cfg
+    )
 
     # data [B,C,H,W]
     clean_img, (H, W) = load_gray_image(
@@ -41,9 +41,10 @@ def main(cfg):
     save_image01(clean_img, f"{out_dir}/clean.png")
 
     # --- Log initial ground truth image to W&B ---
-    # wandb.log({"ground_truth": wandb.Image(clean_img)})
+    # FIX: Use .squeeze(0) to remove batch dim but keep channel dim [1, H, W]
+    wandb.log({"ground_truth": wandb.Image(clean_img.squeeze(0))})
 
-    # print(f"Starting training for run: {run_name}")
+    print(f"Starting training for run: {run_name}")
     for step in range(cfg["epochs"]):
         # 1) sample augmentation
         I_aug = sample_augmentation(cfg, clean_img)  # [1,1,H,W]
@@ -72,31 +73,33 @@ def main(cfg):
             log_data = {
                 "total_loss": total_loss.item(),
                 "psnr_clean": psnr_val.item(),
+                "ssim_clean": ssim_val,
             }
             # Add individual losses from the dictionary
             log_data.update({f"loss/{k}": v for k, v in loss_dict.items()})
-            # wandb.log(log_data, step=step + 1)
+            wandb.log(log_data, step=step + 1)
 
         if (step + 1) % cfg["viz_every"] == 0 or (step + 1) == cfg["epochs"]:
             save_image01(pred_img, f"{out_dir}/recon_step{step+1}.png")
             save_image01(I_aug, f"{out_dir}/aug_step{step+1}.png")
 
             # --- Log images to W&B ---
-            # wandb.log(
-            #     {
-            #         "reconstruction": wandb.Image(pred_img),
-            #         "last_augmentation": wandb.Image(I_aug),
-            #     },
-            #     step=step + 1,
-            # )
+            # FIX: Use .squeeze(0) here as well
+            wandb.log(
+                {
+                    "reconstruction": wandb.Image(pred_img.squeeze(0)),
+                    "last_augmentation": wandb.Image(I_aug.squeeze(0)),
+                },
+                step=step + 1,
+            )
 
-    # wandb.finish()
+    wandb.finish()
     print("Training finished and W&B run completed.")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="config/config.yaml")
+    parser.add_argument("--config", type=str, default="/home/sincheol/SingleImageINR/config/config.yaml")
     args = parser.parse_args()
     with open(args.config, "r") as f:
         cfg = yaml.safe_load(f)
