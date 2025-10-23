@@ -6,6 +6,7 @@ import torch
 import yaml
 
 import wandb
+import lpips  # <-- 1. Import LPIPS
 from aug import sample_augmentation
 from losses import LossBundle
 from models import build_model
@@ -33,6 +34,9 @@ def main(cfg):
     model = build_model(cfg, device)
     opt = torch.optim.Adam(model.parameters(), lr=float(cfg["lr"]))
     losses = LossBundle(cfg, device)
+    
+    # <-- 2. Initialize LPIPS model on CPU (to save VRAM)
+    lpips_fn = lpips.LPIPS(net='alex')
 
     # Automatically append datetime (e.g. runs/exp1_2025-10-13_23-45-02)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -65,8 +69,18 @@ def main(cfg):
         if (step + 1) % 50 == 0:
             psnr_val = psnr(pred_img, clean_img)
             ssim_val = ssim(pred_img.squeeze().cpu().detach().numpy(), clean_img.squeeze().cpu().detach().numpy(), data_range=1.0)
+            
+            # <-- 3. Calculate LPIPS (moving model to/from GPU)
+            lpips_fn.to(device)
+            # Rescale images from [0, 1] to [-1, 1] for LPIPS
+            pred_img_lpips = pred_img * 2.0 - 1.0
+            clean_img_lpips = clean_img * 2.0 - 1.0
+            with torch.no_grad():
+                lpips_val = lpips_fn(pred_img_lpips, clean_img_lpips).item()
+            lpips_fn.to('cpu') # Move back to CPU to free VRAM
+            
             print(
-                f"[{step+1}/{cfg['epochs']}] loss={total_loss.item():.4f} psnr_clean={psnr_val.item():.2f}dB ssim_clean={ssim_val:.4f}"
+                f"[{step+1}/{cfg['epochs']}] loss={total_loss.item():.4f} psnr_clean={psnr_val.item():.2f}dB ssim_clean={ssim_val:.4f} lpips_clean={lpips_val:.4f}"
             )
 
             # --- Log metrics to W&B ---
@@ -74,6 +88,8 @@ def main(cfg):
                 "total_loss": total_loss.item(),
                 "psnr_clean": psnr_val.item(),
                 "ssim_clean": ssim_val,
+                "lpips_clean": lpips_val,  # <-- 4. ADDED LPIPS
+                "learning_rate": opt.param_groups[0]['lr'] # <-- 5. ADDED Learning Rate
             }
             # Add individual losses from the dictionary
             log_data.update({f"loss/{k}": v for k, v in loss_dict.items()})

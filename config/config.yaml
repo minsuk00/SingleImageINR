@@ -8,7 +8,7 @@ exp_name: "exp1_ct_head"
 wandb_project: "Single-Image-Optimization"
 
 # data
-image_path: "data/Chest_CT_3.png"  # grayscale PNG or JPG
+image_path: "/home/sincheol/SingleImageINR/data/ct_chest_1.jpeg"  # grayscale PNG or JPG
 normalize_to: "0_1"        # "0_1" or "-1_1"
 
 # tcnn config
@@ -59,7 +59,7 @@ loss:
   ssim_window: 11
   lpips_weight: 0.0
   chess_weight: 0.5
-  chess_ckpt: "/home/minsukc/SIO/CheSS.pth.tar"
+  chess_ckpt: "/home/sincheol/SingleImageINR/CheSS.pth.tar"
   dino_weight: 0.0        # weight for DINOv3 perceptual loss (tune: 0.1–1.0 typical)
   dino_model: "facebook/dinov3-convnext-tiny-pretrain-lvd1689m"  # or vitb16 version
   dino_layer: "avg"       # optional: "avg" (mean patch feature) or "cls"
