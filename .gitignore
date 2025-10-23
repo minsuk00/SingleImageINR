@@ -4,3 +4,5 @@ wandb/
 runs/
 
 NOTE.md
+test.py
+.DS_Store
