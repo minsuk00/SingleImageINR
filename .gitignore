@@ -6,3 +6,6 @@ runs/
 NOTE.md
 test.py
 .DS_Store
+
+MedDINOv3/
+*.pth
