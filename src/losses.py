@@ -35,18 +35,16 @@ class LossBundle:
 
         # DINOv3 (semantic perceptual)
         self.dino_w = float(cfg["loss"].get("dino_weight", 0.0))
+        self.dino_structure_w = float(cfg["loss"].get("dino_structure_weight", 0.0))
         self.dino_model = None
         self.dino_processor = None
-        self.dino_layer = cfg["loss"].get("dino_layer", "avg")
 
-        if self.dino_w > 0.0:
-            model_name = cfg["loss"].get(
-                "dino_model", "facebook/dinov3-convnext-tiny-pretrain-lvd1689m"
-            )
-            self.dino_model, self.dino_processor = self._load_dino_model(
-                model_name, device
-            )
-            print(f"[DINOv3] loaded {model_name} for perceptual loss")
+        if self.dino_w > 0.0 or self.dino_structure_w > 0.0:
+            model_name = "facebook/dinov3-vits16-pretrain-lvd1689m"
+            self.dino_processor = AutoImageProcessor.from_pretrained(model_name)
+            self.dino_model = AutoModel.from_pretrained(model_name).to(device).eval()
+            for p in self.dino_model.parameters():
+                p.requires_grad = False
 
         self.device = device
 
@@ -141,40 +139,48 @@ class LossBundle:
     # --------------------------------------------------------
     # DINOv3 perceptual loss (semantic)
     # --------------------------------------------------------
-    def _load_dino_model(self, model_name, device):
-        processor = AutoImageProcessor.from_pretrained(model_name)
-        model = AutoModel.from_pretrained(model_name).to(device).eval()
-        return model, processor
-
     @torch.no_grad()
-    def _extract_dino_feat(self, model, processor, img, layer="avg"):
-        # img: [B, C, H, W] in [0,1]; DINO expects 3ch RGB
+    def _get_dino_feats(self, img):
+        assert self.dino_processor is not None and self.dino_model is not None
+
+        # img: [B, 1, H, W] or [B, 3, H, W], normalized [0,1]
         if img.shape[1] == 1:
-            img = self._to_3ch(img)
-        img = img.clamp(0, 1)
-        inputs = processor(images=[x for x in img], return_tensors="pt").to(img.device)
-        outputs = model(**inputs, output_hidden_states=True)
+            img = img.repeat(1, 3, 1, 1)
+        pil_like = (img * 255).clamp(0, 255).to(torch.uint8)
+        # Transform for DINO input
+        inputs = self.dino_processor(
+            images=[x.permute(1, 2, 0).cpu().numpy() for x in pil_like],
+            return_tensors="pt",
+        ).to(self.device)
+        with torch.no_grad():
+            outputs = self.dino_model(**inputs)
+        feats = outputs.last_hidden_state  # [B, N_tokens, D]
+        # Remove CLS + register tokens
+        num_regs = getattr(self.dino_model.config, "num_register_tokens", 0)
+        feats = feats[:, 1 + num_regs :, :]
+        return F.normalize(feats, dim=-1)
 
-        last_hidden = outputs.last_hidden_state  # [B, tokens, D]
-        if layer == "cls":
-            feat = last_hidden[:, 0, :]  # CLS token
-        else:
-            feat = last_hidden[:, 1:, :].mean(dim=1)  # mean of patch embeddings
-        feat = F.normalize(feat, dim=-1)
-        return feat
-
-    def dino_loss(self, pred_img, target_img):
+    def dino_feat_loss(self, pred_img, target_img):
         if self.dino_w <= 0.0 or self.dino_model is None:
             return 0.0
-        feat_pred = self._extract_dino_feat(
-            self.dino_model, self.dino_processor, pred_img, self.dino_layer
-        )
-        feat_targ = self._extract_dino_feat(
-            self.dino_model, self.dino_processor, target_img, self.dino_layer
-        )
-        # loss = (1 - (feat_pred * feat_targ).sum(dim=-1)).mean()  # cosine distance
-        loss = F.mse_loss(feat_pred, feat_targ)
-        return self.dino_w * loss
+        f_pred = self._get_dino_feats(pred_img)
+        f_targ = self._get_dino_feats(target_img)
+        # Mean squared error over normalized embeddings
+        return self.dino_w * F.mse_loss(f_pred, f_targ)
+
+    def dino_structure_loss(self, pred_img, target_img):
+        if self.dino_structure_w <= 0.0 or self.dino_model is None:
+            return 0.0
+        f_pred = self._get_dino_feats(pred_img)
+        f_targ = self._get_dino_feats(target_img)
+
+        # Compute patch-wise similarity matrices (cosine)
+        sim_pred = torch.einsum("bid,bjd->bij", f_pred, f_pred)
+        sim_targ = torch.einsum("bid,bjd->bij", f_targ, f_targ)
+
+        # Normalize between -1 and 1 (already cosine normalized)
+        loss = F.mse_loss(sim_pred, sim_targ)
+        return self.dino_structure_w * loss
 
     # --------------------------------------------------------
     # Total loss (combined)
@@ -192,7 +198,8 @@ class LossBundle:
         l_ssim = self.structural_loss(pred_img, target_img)
         l_lpips = self.perceptual_loss(pred_img, target_img)
         l_chess = self.chess_loss(pred_img, target_img)
-        l_dino = self.dino_loss(pred_img, target_img)
+        l_dino = self.dino_feat_loss(pred_img, target_img)
+        l_dino_struct = self.dino_structure_loss(pred_img, target_img)
 
         # Add to total loss and log dictionary if they are active
         if isinstance(l_pix, torch.Tensor):
@@ -210,6 +217,9 @@ class LossBundle:
         if isinstance(l_dino, torch.Tensor):
             total_loss += l_dino
             loss_dict["dino"] = l_dino.item()
+        if isinstance(l_dino_struct, torch.Tensor):
+            total_loss += l_dino_struct
+            loss_dict["dino_struct"] = l_dino_struct.item()
 
         return total_loss, loss_dict
 

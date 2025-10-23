@@ -9,8 +9,8 @@ exp_name: "exp1_ct_head"
 wandb_project: "Single-Image-Optimization"
 
 # data
-image_path: "data/ct_chest_1.jpeg"  # grayscale PNG or JPG
-normalize_to: "0_1"        # "0_1" or "-1_1"
+image_path: "data/ct_chest_1.jpeg" # grayscale PNG or JPG
+normalize_to: "0_1" # "0_1" or "-1_1"
 
 # tcnn config
 hash:
@@ -41,10 +41,10 @@ augment:
 
   prob_speckle: 0.0
   speckle_sigma: 0.05
-  speckle_mean: 0.02  
+  speckle_mean: 0.02
 
   prob_poisson: 0.0
-  poisson_scale: 10.0   # photon count scaling (higher = less noise)
+  poisson_scale: 10.0 # photon count scaling (higher = less noise)
   poisson_bias: 0.05
 
   prob_saltpepper: 0.0
@@ -62,6 +62,5 @@ loss:
   chess_weight: 0.5
   # chess_ckpt: "/home/sincheol/SingleImageINR/CheSS.pth.tar"
   chess_ckpt: "CheSS.pth.tar"
-  dino_weight: 0.0        # weight for DINOv3 perceptual loss (tune: 0.1–1.0 typical)
-  dino_model: "facebook/dinov3-convnext-tiny-pretrain-lvd1689m"  # or vitb16 version
-  dino_layer: "avg"       # optional: "avg" (mean patch feature) or "cls"
+  dino_weight: 0.0
+  dino_structure_weight: 0.0

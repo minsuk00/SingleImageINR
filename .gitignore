@@ -4,5 +4,9 @@ wandb/
 runs/
 config/
 
+.DS_Store
+MedDINOv3/
+*.pth
+test.py
 NOTE.md
 *.tar
