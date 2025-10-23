@@ -2,16 +2,16 @@ import argparse
 import os
 from datetime import datetime
 
+import lpips
 import torch
 import yaml
+from skimage.metrics import structural_similarity as ssim
 
 import wandb
-import lpips  # <-- 1. Import LPIPS
 from aug import sample_augmentation
 from losses import LossBundle
 from models import build_model
 from utils import load_gray_image, psnr, render_full, save_image01, set_seed
-from skimage.metrics import structural_similarity as ssim
 
 
 def main(cfg):
@@ -27,20 +27,20 @@ def main(cfg):
 
     # data [B,C,H,W]
     clean_img, (H, W) = load_gray_image(
-        cfg["image_path"], normalize_to="0_1", device=device
+        os.path.join(cfg["project_root"], cfg["image_path"]),
+        normalize_to="0_1",
+        device=device,
     )  # [1,1,H,W]
 
     # model
     model = build_model(cfg, device)
     opt = torch.optim.Adam(model.parameters(), lr=float(cfg["lr"]))
     losses = LossBundle(cfg, device)
-    
-    # <-- 2. Initialize LPIPS model on CPU (to save VRAM)
-    lpips_fn = lpips.LPIPS(net='alex')
+    lpips_fn = lpips.LPIPS(net="vgg")
 
     # Automatically append datetime (e.g. runs/exp1_2025-10-13_23-45-02)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    out_dir = os.path.join(cfg["out_dir"], timestamp)
+    out_dir = os.path.join(cfg["project_root"], cfg["out_dir"], timestamp)
     os.makedirs(out_dir, exist_ok=True)
     save_image01(clean_img, f"{out_dir}/clean.png")
 
@@ -68,17 +68,25 @@ def main(cfg):
         # 5) logging / visualization
         if (step + 1) % 50 == 0:
             psnr_val = psnr(pred_img, clean_img)
-            ssim_val = ssim(pred_img.squeeze().cpu().detach().numpy(), clean_img.squeeze().cpu().detach().numpy(), data_range=1.0)
-            
-            # <-- 3. Calculate LPIPS (moving model to/from GPU)
+            ssim_val = ssim(
+                pred_img.squeeze().cpu().detach().numpy(),
+                clean_img.squeeze().cpu().detach().numpy(),
+                data_range=1.0,
+            )
+
             lpips_fn.to(device)
             # Rescale images from [0, 1] to [-1, 1] for LPIPS
             pred_img_lpips = pred_img * 2.0 - 1.0
             clean_img_lpips = clean_img * 2.0 - 1.0
             with torch.no_grad():
-                lpips_val = lpips_fn(pred_img_lpips, clean_img_lpips).item()
-            lpips_fn.to('cpu') # Move back to CPU to free VRAM
-            
+                lpips_val = lpips_fn(
+                    # pred_img_lpips.detach(), clean_img_lpips.detach()
+                    pred_img_lpips.cpu().detach(),
+                    clean_img_lpips.cpu().detach(),
+                ).item()
+            lpips_fn.to("cpu")  # Move back to CPU to free VRAM
+            # lpips_val=0
+
             print(
                 f"[{step+1}/{cfg['epochs']}] loss={total_loss.item():.4f} psnr_clean={psnr_val.item():.2f}dB ssim_clean={ssim_val:.4f} lpips_clean={lpips_val:.4f}"
             )
@@ -88,8 +96,8 @@ def main(cfg):
                 "total_loss": total_loss.item(),
                 "psnr_clean": psnr_val.item(),
                 "ssim_clean": ssim_val,
-                "lpips_clean": lpips_val,  # <-- 4. ADDED LPIPS
-                "learning_rate": opt.param_groups[0]['lr'] # <-- 5. ADDED Learning Rate
+                "lpips_clean": lpips_val,
+                "learning_rate": opt.param_groups[0]["lr"],
             }
             # Add individual losses from the dictionary
             log_data.update({f"loss/{k}": v for k, v in loss_dict.items()})
@@ -115,7 +123,7 @@ def main(cfg):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="/home/sincheol/SingleImageINR/config/config.yaml")
+    parser.add_argument("--config", type=str, default="config/config.yaml")
     args = parser.parse_args()
     with open(args.config, "r") as f:
         cfg = yaml.safe_load(f)

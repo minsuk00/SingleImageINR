@@ -1,3 +1,5 @@
+import os
+
 import lpips  # LPIPS (expects 3-ch)
 import torch
 import torch.nn as nn
@@ -27,7 +29,9 @@ class LossBundle:
         self.chess_w = float(cfg["loss"].get("chess_weight", 0.0))
         self.chess_model = None
         if self.chess_w > 0.0:
-            self.chess_model = self._load_chess_model(cfg["loss"]["chess_ckpt"], device)
+            self.chess_model = self._load_chess_model(
+                os.path.join(cfg["project_root"], cfg["loss"]["chess_ckpt"]), device
+            )
 
         # DINOv3 (semantic perceptual)
         self.dino_w = float(cfg["loss"].get("dino_weight", 0.0))
@@ -193,19 +197,19 @@ class LossBundle:
         # Add to total loss and log dictionary if they are active
         if isinstance(l_pix, torch.Tensor):
             total_loss += l_pix
-            loss_dict['pixel'] = l_pix.item()
+            loss_dict["pixel"] = l_pix.item()
         if isinstance(l_ssim, torch.Tensor):
             total_loss += l_ssim
-            loss_dict['ssim'] = l_ssim.item()
+            loss_dict["ssim"] = l_ssim.item()
         if isinstance(l_lpips, torch.Tensor):
             total_loss += l_lpips
-            loss_dict['lpips'] = l_lpips.item()
+            loss_dict["lpips"] = l_lpips.item()
         if isinstance(l_chess, torch.Tensor):
             total_loss += l_chess
-            loss_dict['chess'] = l_chess.item()
+            loss_dict["chess"] = l_chess.item()
         if isinstance(l_dino, torch.Tensor):
             total_loss += l_dino
-            loss_dict['dino'] = l_dino.item()
+            loss_dict["dino"] = l_dino.item()
 
         return total_loss, loss_dict
 
@@ -219,5 +223,7 @@ if __name__ == "__main__":
     # Find conv1 weight
     for k, v in state_dict.items():
         if "conv1.weight" in k:
+            print(k, v.shape)
+            break
             print(k, v.shape)
             break
