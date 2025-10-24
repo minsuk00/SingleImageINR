@@ -32,9 +32,8 @@ def run_sweep():
     # We now use "dot.notation" for nested keys.
     # This example tests loss weights and hash size.
     param_grid = {
-        "lr": [1e-3],  # Fixed LR for this sweep
+        "lr": [1e-3],  
         "hash.encoding_config.log2_hashmap_size": [19, 20],
-        # --- HERE ARE THE LOSS PARAMETERS YOU ASKED FOR ---
         "loss.pixel_weight": [1.0, 0.5],
         "loss.ssim_weight": [0.0, 0.5],
         "loss.lpips_weight": [0.0, 0.5],
@@ -117,7 +116,6 @@ def run_sweep():
                 print(
                     f"\nFAILED run: {run_cfg['exp_name']} with an unexpected error: {e}"
                 )
-                # You might want to break or continue here
         except Exception as e:
             print(f"\nFAILED run: {run_cfg['exp_name']} with an unexpected error: {e}")
 
