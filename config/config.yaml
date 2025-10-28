@@ -9,7 +9,7 @@ exp_name: "exp1_ct_head"
 wandb_project: "Single-Image-Optimization"
 
 # data
-image_path: "data/ct_chest_1.jpeg" # grayscale PNG or JPG
+image_path: "/home/sincheol/SingleImageINR/data/ct_chest_1.jpeg" # grayscale PNG or JPG
 normalize_to: "0_1" # "0_1" or "-1_1"
 
 # tcnn config
@@ -19,7 +19,7 @@ hash:
     type: "Hash"
     n_levels: 12
     n_features_per_level: 4
-    log2_hashmap_size: 21
+    log2_hashmap_size: 20
     base_resolution: 16
     per_level_scale: 1.5
     interpolation: "Linear"

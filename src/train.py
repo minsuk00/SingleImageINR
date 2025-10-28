@@ -6,7 +6,7 @@ import torch
 import yaml
 
 import wandb
-import lpips 
+import lpips
 from aug import sample_augmentation
 from losses import LossBundle
 from models import build_model
@@ -19,6 +19,11 @@ def main(cfg):
     set_seed(cfg["seed"])
 
     # --- W&B Initialization ---
+    # Check for the master switch from run_sweep.py
+    # Default to True if not running from sweep (e.g. `python train.py`)
+    use_wandb = cfg.get("wandb_enabled", True)
+    wandb_mode = "online" if use_wandb else "disabled"
+
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     run_name = f"{cfg['exp_name']}_{timestamp}"
     
@@ -26,7 +31,8 @@ def main(cfg):
         project=cfg.get("wandb_project", "inir-project"), 
         name=run_name, 
         config=cfg,
-        group=cfg.get("sweep_group", "default-group")
+        group=cfg.get("sweep_group", "default-group"),
+        mode=wandb_mode
     )
 
     # data [B,C,H,W]
@@ -35,7 +41,6 @@ def main(cfg):
     )  # [1,1,H,W]
     
     # --- Load LPIPS on CPU to share ---
-    # We use 'vgg' to match the network you had in losses.py
     # It lives on the CPU to save VRAM.
     lpips_fn = lpips.LPIPS(net='vgg')
 
@@ -117,7 +122,7 @@ def main(cfg):
                 step=step + 1,
             )
 
-    wandb.finish()
+    wandb.finish() # This will do nothing if mode="disabled"
     print(f"--- Finished run: {run_name} ---")
 
 
@@ -130,5 +135,6 @@ if __name__ == "__main__":
     
     # Set a default group name for single runs
     cfg["sweep_group"] = "single_run"
+    
     main(cfg)
 
