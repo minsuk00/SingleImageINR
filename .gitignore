@@ -9,3 +9,6 @@ test.py
 
 MedDINOv3/
 *.pth
+
+.vscode/
+*.pth.tar
