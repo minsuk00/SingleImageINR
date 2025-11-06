@@ -10,3 +10,13 @@ MedDINOv3/
 test.py
 NOTE.md
 *.tar
+NOTE.md
+test.py
+.DS_Store
+
+MedDINOv3/
+*.pth
+
+.vscode/
+*.pth.tar
+pyrightconfig.json
