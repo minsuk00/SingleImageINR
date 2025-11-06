@@ -16,3 +16,5 @@ pillow
 pyyaml
 pytorch-msssim
 lpips
+transformers
+wandb
