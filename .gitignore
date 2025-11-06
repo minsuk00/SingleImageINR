@@ -12,3 +12,4 @@ MedDINOv3/
 
 .vscode/
 *.pth.tar
+pyrightconfig.json
