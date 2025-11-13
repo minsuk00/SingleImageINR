@@ -23,7 +23,9 @@ class LossBundle:
         if self.lpips_w > 0.0:
             self.lpips_model = lpips_fn
             if self.lpips_model is None:
-                print("Warning: lpips_weight > 0 but no lpips_fn was provided to LossBundle.")
+                print(
+                    "Warning: lpips_weight > 0 but no lpips_fn was provided to LossBundle."
+                )
 
         # Medical perceptual (CheSS)
         self.chess_w = float(cfg["loss"].get("chess_weight", 0.0))
@@ -46,7 +48,7 @@ class LossBundle:
             )
             print(f"[DINOv3] loaded {model_name} for perceptual loss")
 
-        self.device = device # The main device (GPU)
+        self.device = device  # The main device (GPU)
 
     # --------------------------------------------------------
     # Pixel loss (L1 or L2) - UNWEIGHTED
@@ -98,7 +100,7 @@ class LossBundle:
         with torch.no_grad():
             lp = self.lpips_model(pred, targ).mean()
 
-        self.lpips_model.to('cpu')
+        self.lpips_model.to("cpu")
         return lp
 
     # --------------------------------------------------------
@@ -141,14 +143,14 @@ class LossBundle:
     def chess_loss(self, pred_img, target_img):
         if self.chess_w <= 0.0 or self.chess_model is None:
             return 0.0
-        
+
         device = pred_img.device
         self.chess_model.to(device)
-        
+
         feat_pred = self._extract_chess_feat(self.chess_model, pred_img)
         feat_targ = self._extract_chess_feat(self.chess_model, target_img)
         loss = F.mse_loss(feat_pred, feat_targ)
-        
+
         self.chess_model.to("cpu")
         return loss
 
@@ -166,9 +168,11 @@ class LossBundle:
         if img.shape[1] == 1:
             img = self._to_3ch(img)
         img = img.clamp(0, 1)
-        
-        inputs = processor(images=[x for x in img], return_tensors="pt").to(model.device)
-        
+
+        inputs = processor(images=[x for x in img], return_tensors="pt").to(
+            model.device
+        )
+
         outputs = model(**inputs, output_hidden_states=True)
 
         last_hidden = outputs.last_hidden_state
@@ -185,7 +189,7 @@ class LossBundle:
 
         device = pred_img.device
         self.dino_model.to(device)
-        
+
         feat_pred = self._extract_dino_feat(
             self.dino_model, self.dino_processor, pred_img, self.dino_layer
         )
@@ -193,7 +197,7 @@ class LossBundle:
             self.dino_model, self.dino_processor, target_img, self.dino_layer
         )
         loss = F.mse_loss(feat_pred, feat_targ)
-        
+
         self.dino_model.to("cpu")
         return loss
 
@@ -215,23 +219,23 @@ class LossBundle:
         l_dino = self.dino_loss(pred_img, target_img)
 
         if isinstance(l_pix, torch.Tensor) and l_pix.item() > 0:
-            loss_dict['pixel'] = l_pix.item()
+            loss_dict["pixel"] = l_pix.item()
             total_loss += l_pix * self.pixel_w
 
         if isinstance(l_ssim, torch.Tensor) and l_ssim.item() > 0:
-            loss_dict['ssim'] = l_ssim.item()
+            loss_dict["ssim"] = l_ssim.item()
             total_loss += l_ssim * self.ssim_w
 
         if isinstance(l_lpips, torch.Tensor) and l_lpips.item() > 0:
-            loss_dict['lpips'] = l_lpips.item()
+            loss_dict["lpips"] = l_lpips.item()
             total_loss += l_lpips * self.lpips_w
 
         if isinstance(l_chess, torch.Tensor) and l_chess.item() > 0:
-            loss_dict['chess'] = l_chess.item()
+            loss_dict["chess"] = l_chess.item()
             total_loss += l_chess * self.chess_w
 
         if isinstance(l_dino, torch.Tensor) and l_dino.item() > 0:
-            loss_dict['dino'] = l_dino.item()
+            loss_dict["dino"] = l_dino.item()
             total_loss += l_dino * self.dino_w
 
         return total_loss, loss_dict
@@ -248,4 +252,3 @@ if __name__ == "__main__":
         if "conv1.weight" in k:
             print(k, v.shape)
             break
-
