@@ -9,7 +9,7 @@ setuptools
 wheel
 
 # ---- Tiny CUDA NN (requires CUDA & GCC loaded before install) ----
-git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
+# git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
 
 # ---- Common utilities ----
 pillow

@@ -10,9 +10,7 @@ import argparse
 try:
     from train import main as train_main
 except ImportError:
-    print("Error: Could not import the 'main' function from 'train.py'.")
-    print("Please make sure 'train.py' is in the same directory.")
-    exit(1)
+    raise ImportError("Error: Could not import 'main' from 'train.py'. Ensure it is in the same directory.")
 
 
 # Helper function to set nested dictionary keys using a dot-separated string
@@ -31,17 +29,23 @@ def set_nested_key(d, key_str, value):
 def run_sweep(wandb_enabled):
     # --- Define Your Parameter Grid ---
     param_grid = {
-        "lr": [1e-3],
+        "lr": [3e-4],
         # Using a smaller hash size to prevent OOM
-        "hash.encoding_config.log2_hashmap_size": [19],
-        "loss.pixel_weight": [1.0, 0.5],
-        "loss.ssim_weight": [0.0, 0.5],
-        "loss.lpips_weight": [0.0, 0.5],
-        "loss.chess_weight": [0.5, 1.0],
+        # "hash.encoding_config.log2_hashmap_size": [19],
+        # "loss.pixel_weight": [1.0, 0.5],
+        # "loss.ssim_weight": [0.0, 0.5],
+        # "loss.lpips_weight": [0.0, 0.5],
+        # "loss.chess_weight": [0.5, 1.0],
+        "augment.translation_px_max": [15, 50],
+        "loss.pixel_weight": [1.0],
+        "loss.correspondence_weight": [0.0, 1.0],
     }
 
     # --- Load Base Configuration ---
-    base_config_path = "/home/sincheol/SingleImageINR/config/config.yaml"
+    base_config_path = "config/config.yaml" # Relative path preferred
+    if not os.path.exists(base_config_path):
+         base_config_path = "/home/minsukc/SIO/config/config.yaml"
+
     try:
         with open(base_config_path, "r") as f:
             base_cfg = yaml.safe_load(f)
@@ -50,7 +54,7 @@ def run_sweep(wandb_enabled):
         return
 
     # Create a unique group name for this set of runs
-    sweep_group_name = f"Sweep_Loss_Weights_{datetime.now().strftime('%Y-%m-%d_%H-%M')}"
+    sweep_group_name = f"Sweep_{datetime.now().strftime('%Y-%m-%d_%H-%M')}"
     base_cfg["sweep_group"] = sweep_group_name
 
     # --- Generate and Run Experiments ---
@@ -62,15 +66,12 @@ def run_sweep(wandb_enabled):
     print(f"Starting sweep '{sweep_group_name}' with {total_runs} total runs.")
     if not wandb_enabled:
         print("\n*** WANDB LOGGING IS DISABLED ***\n")
-
+        
     for i, combo in enumerate(all_combinations):
         run_cfg = copy.deepcopy(base_cfg)
-
-        # --- Modify Config for this Run ---
-        
-        # Pass the master W&B switch to the config
         run_cfg['wandb_enabled'] = wandb_enabled
 
+        # --- Modify Config for this Run ---
         run_name_parts = []
         config_summary = []
 
@@ -89,50 +90,27 @@ def run_sweep(wandb_enabled):
 
         # --- Run Training ---
         try:
-            print("\n" + "=" * 50)
-            print(f"Starting run ({i+1}/{total_runs}): {run_cfg['exp_name']}")
-            print(f"Config: {', '.join(config_summary)}")
-            print("=" * 50 + "\n")
-
+            print(f"\n=== Run ({i+1}/{total_runs}): {run_cfg['exp_name']} ===")
+            print(f"Config: {', '.join(config_summary)}\n")
+            
             train_main(run_cfg)
+            
+            print(f"Finished: {run_cfg['exp_name']}")
 
-            print(f"\nSuccessfully finished run: {run_cfg['exp_name']}")
-
-        except RuntimeError as e:
-            if "CUDA out of memory" in str(e):
-                print("\n" + "!" * 50)
-                print(f"FAILED run: {run_cfg['exp_name']} due to CUDA Out of Memory.")
-                print("Skipping this combination.")
-                print("!" * 50 + "\n")
-                if wandb_enabled:
-                    wandb.finish(exit_code=1) # Finish the crashed run
-            else:
-                print(
-                    f"\nFAILED run: {run_cfg['exp_name']} with an unexpected error: {e}"
-                )
-                if wandb_enabled:
-                    wandb.finish(exit_code=1) # Finish the crashed run
         except Exception as e:
-            print(f"\nFAILED run: {run_cfg['exp_name']} with an unexpected error: {e}")
-            if wandb_enabled:
-                wandb.finish(exit_code=1) # Finish the crashed run
+            print(f"\n!!! FAILED run: {run_cfg['exp_name']} !!!")
+            print(f"Error: {e}")
+            if wandb_enabled and wandb.run is not None:
+                wandb.finish(exit_code=1)
         
-        # Clean up memory
+        # Cleanup
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
 
 if __name__ == "__main__":
-    # --- Add argument parsing ---
-    parser = argparse.ArgumentParser(description="Run a hyperparameter sweep.")
-    # This setup enables W&B by default.
-    # Running with '--no-wandb' will set 'wandb_enabled' to False.
-    parser.add_argument(
-        "--no-wandb",
-        action="store_false",
-        dest="wandb_enabled",
-        help="Disable Weights & Biases logging for this sweep.",
-    )
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-W", "--no-wandb", action="store_false", dest="wandb_enabled")
     args = parser.parse_args()
 
     run_sweep(args.wandb_enabled)
