@@ -1,6 +1,6 @@
  # training
 seed: 42
-epochs: 2000
+epochs: 500
 # lr: 1e-3
 lr: 3e-4
 project_root: "/home/minsukc/SIO" # NOTE: Change accordingly
@@ -9,7 +9,8 @@ exp_name: "exp"
 wandb_project: "Single-Image-Optimization"
 
 viz:
-    viz_every: 200
+    viz_every: 50
+    # viz_every: 10
     correspondence: True
 
 # data
@@ -17,7 +18,9 @@ viz:
 # image_path: "/home/minsukc/SIO/data/ct_chest_1_resized_512x451.jpeg" 
 # image_path: "/home/minsukc/SIO/data/ct_chest_1_resized_1024x902.jpeg"
 # image_path: "/home/minsukc/SIO/data/ct_chest_1_resized_1024x902.jpeg"
-image_path: "/home/minsukc/SIO/data/ct_chest_2_resized_1024x1024.png" 
+# image_path: "/home/minsukc/SIO/data/ct_chest_2_resized_1024x1024.png" 
+# image_path: "/home/minsukc/SIO/data/ct_chest_2_resized_512x512.png" 
+image_path: "/home/minsukc/SIO/data/ct_chest_2_resized_256x256.png" 
 normalize_to: "0_1" # "0_1" or "-1_1"
 
 # tcnn config
@@ -41,7 +44,9 @@ hash:
 # augmentation
 augment:
   # --- Spatial Augmentations ---
-  # (Applied first, in this order)
+  mode: "fixed" # fixed, infinite
+  num_views: 10
+  # TODO: change to percentage of image, not raw pixel translation?
   
   # Rotation
   prob_rotation: 0.0          
@@ -59,9 +64,10 @@ augment:
   # Translation (applied last)
   prob_translation: 1.0      
   # translation_px_max: 50
-  translation_px_max: 32
-  # translation_px_max: 30
-  # translation_px_max: 15
+  # translation_px_max: 32
+  # translation_px_max: 8
+  translation_frac_max: 0.05 # e.g., 1024 * 0.05 ≈ 51 => -51 ~ 51
+  # translation_frac_max: 0.3
   
 
   # --- Noise Augmentations ---
@@ -85,6 +91,11 @@ augment:
 
 # losses and weights
 loss:
+  use_warp_mask: true
+  # use_warp_mask: false
+  use_alignment_correction: false
+  # use_alignment_correction: true
+
   pixel: l1
   pixel_weight: 1.0
   # pixel_weight: 0.0
@@ -99,7 +110,7 @@ loss:
   # DINOv3
   dino_weight: 0.0
   # dino_weight: 1.0
-  # dino_weight: 1000.0
+  # dino_weight: 100.0
   dino_model: "facebook/dinov3-vitb16-pretrain-lvd1689m"
   dino_structure_weight: 0.0
   # SAMv2
@@ -108,9 +119,10 @@ loss:
   sam_layer: 10  # which hidden layer to use
 
   # Correspondence loss
-  # corr_weight: 1.0
-  # correspondence_weight: 0.5
-  correspondence_weight: 0.0
+  corr_weight: 0.0
+  # corr_weight: 10.0
+  # corr_weight: 100.0
+  # corr_weight: 1000.0
   # corr_model: "facebook/dinov3-vits16-pretrain-lvd1689m"
   # corr_model: "facebook/dinov3-vits16plus-pretrain-lvd1689m"
   corr_model: "facebook/dinov3-vitb16-pretrain-lvd1689m"
@@ -118,9 +130,8 @@ loss:
   corr_dino_layer: -1       # or -3
   # corr_layer: -3
   
-  corr_pixel_weight: 1.0
-  # corr_pixel_weight: 0.0
-  # corr_search_r: null
+  corr_pixel_weight: 0.0
+  # corr_pixel_weight: 1.0
   corr_search_r: 10
   
 

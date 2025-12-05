@@ -30,10 +30,11 @@ def load_gray_image(path, normalize_to="0_1", device: Union[str, torch.device] =
 
 
 def grid_coords(H, W, device):
-    ys = torch.linspace(-1, 1, H, device=device)
-    xs = torch.linspace(-1, 1, W, device=device)
-    # indexing='ij' means meshgrid returns (H, W)
-    yy, xx = torch.meshgrid(ys, xs, indexing="ij")
+    ys = torch.linspace(0, 1, H, device=device)
+    xs = torch.linspace(0, 1, W, device=device)
+    # ys = torch.linspace(-1, 1, H, device=device)
+    # xs = torch.linspace(-1, 1, W, device=device)
+    yy, xx = torch.meshgrid(ys, xs, indexing="ij") # indexing='ij' means meshgrid returns (H, W)
     return torch.stack([xx, yy], dim=-1).view(-1, 2)  # [H*W,2]
 
 

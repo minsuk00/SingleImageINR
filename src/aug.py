@@ -71,19 +71,13 @@ def add_salt_pepper(img, prob=0.05, low_val=0.0, high_val=1.0):
     I_noisy[mask > 1 - prob / 2] = high_val
     return I_noisy
 
-
-# --------------------------------------------------------
-# Main augmentation sampler
-# --------------------------------------------------------
-def sample_augmentation(cfg, clean_img):
+def generate_augmented_view(cfg,img):
     """
-    Returns:
-        noisy_img: Augmented image tensor
-        aug_params: Dictionary containing applied parameters (dx, dy, etc.)
+    Generates a single augmented view (Image + Mask + Grid).
     """
     aug_cfg = cfg["augment"]
-    device = clean_img.device
-    B, C, H, W = clean_img.shape
+    B, C, H, W = img.shape
+    device = img.device
     
     # Store parameters here
     aug_params = {
@@ -121,19 +115,28 @@ def sample_augmentation(cfg, clean_img):
         )
         
     if random.random() < aug_cfg.get("prob_translation", 0.0):
-        dx = random.randint(-aug_cfg.get("translation_px_max", 0), aug_cfg.get("translation_px_max", 0))
-        dy = random.randint(-aug_cfg.get("translation_px_max", 0), aug_cfg.get("translation_px_max", 0))
+        frac = aug_cfg.get("translation_frac_max",0.0)
+        # Example: frac=0.05 means range [-5% W, +5% W]
+        limit_x = frac * W
+        limit_y = frac * H
+        dx = random.uniform(-limit_x, limit_x)
+        dy = random.uniform(-limit_y, limit_y)
         aug_params["dx"] = dx
         aug_params["dy"] = dy
         grid = _get_translation_grid(grid, dx, dy, device)
-
-    spatially_augmented_img = F.grid_sample(
-        clean_img, grid, mode="bilinear", align_corners=True, padding_mode="zeros"
-    )
     
+    # Warp Image
+    warped_img = F.grid_sample(img, grid, align_corners=True, padding_mode="zeros")
+    
+    # --- Mask ---
+    # warp a white image (ones) using the same grid.
+    # Any black pixels in the result represent padding (invalid areas).
+    ones_mask = torch.ones_like(img) 
+    warped_mask = F.grid_sample(ones_mask, grid, mode="nearest", align_corners=True, padding_mode="zeros")
+    warped_mask = (warped_mask > 0.9).float()
+
     # --- 2. Noise ---
-    noisy_img = spatially_augmented_img
-    # (Noise logic omitted for brevity, same as before)
+    noisy_img = warped_img
     if random.random() < aug_cfg.get("prob_gaussian", 0.0):
         noisy_img = add_gaussian(noisy_img, sigma=aug_cfg.get("gaussian_sigma", 0.0), mean=aug_cfg.get("gaussian_mean", 0.0))
     if random.random() < aug_cfg.get("prob_speckle", 0.0):
@@ -143,4 +146,54 @@ def sample_augmentation(cfg, clean_img):
     if random.random() < aug_cfg.get("prob_saltpepper", 0.0):
         noisy_img = add_salt_pepper(noisy_img, prob=aug_cfg.get("saltpepper_prob", 0.0), low_val=aug_cfg.get("saltpepper_low", 0.0), high_val=aug_cfg.get("saltpepper_high", 1.0))
 
-    return noisy_img, aug_params
+    return {
+        "image": noisy_img,    # Augmented view
+        "mask": warped_mask,   # Valid pixels for this view
+        "grid": grid,          # The transformation used
+        "params": aug_params
+    }
+
+# --------------------------------------------------------
+# Main augmentation sampler
+# --------------------------------------------------------
+class PrecomputedAugmentations:
+    def __init__(self, cfg, clean_img, num_views=10):
+        self.views = []
+        self.num_views = num_views
+        self.device = clean_img.device
+        
+        print(f"[Aug] Generating {num_views} fixed augmentations...")
+        
+        # 1. Generate N random views
+        for _ in range(num_views):
+            view_data = generate_augmented_view(cfg, clean_img)
+            self.views.append(view_data)
+            
+        # 2. Compute Average Image (for visualization)
+        stack = torch.cat([v['image'] for v in self.views], dim=0)
+        self.average_img = torch.mean(stack, dim=0, keepdim=True)
+
+
+    def __getitem__(self, idx):
+        return self.views[idx]
+
+    def __len__(self):
+        return len(self.views)
+
+class InfiniteAugmentations:
+    """Generates N fresh random views per step."""
+    def __init__(self, cfg, clean_img, num_views=1):
+        self.cfg = cfg
+        self.clean_img = clean_img
+        self.num_views = num_views
+        
+        # For infinite, 'average' is just the clean image (expectation of noise is 0)
+        self.average_img = clean_img
+        print(f"[Aug] Initialized INFINITE augmentations (Accumulating {num_views} per step).")
+
+    def __getitem__(self, idx):
+        # idx is ignored, we just return a new random sample
+        return generate_augmented_view(self.cfg, self.clean_img)
+
+    def __len__(self):
+        return self.num_views
