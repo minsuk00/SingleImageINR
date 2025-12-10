@@ -12,7 +12,7 @@ import torch.nn.functional as F
 import wandb
 from losses import LossBundle
 from models import build_model
-from aug import PrecomputedAugmentations, InfiniteAugmentations
+from aug import PrecomputedAugmentations, InfiniteAugmentations, SingleFixedAugmentation
 from utils import (
     load_gray_image, psnr, render_full, save_image01, set_seed, 
     draw_correspondence_lines, compute_correspondence_error_map, 
@@ -94,10 +94,13 @@ def main(cfg):
     num_views = aug_cfg.get("num_views", 10) # Number of views to accumulate gradients over
 
     if aug_mode == "infinite":
-        # aug_set = InfiniteAugmentations(cfg, clean_img, num_views=num_views)
         aug_set = InfiniteAugmentations(cfg, clean_img, num_views=1)
+    elif aug_mode == "single_fixed":
+        aug_set = SingleFixedAugmentation(cfg, clean_img) 
     else:
         aug_set = PrecomputedAugmentations(cfg, clean_img, num_views=num_views)
+
+    
     # Log Setup to WandB
     init_log = {
         "images/clean_ground_truth": wandb.Image(clean_img.squeeze(0)),
@@ -244,9 +247,10 @@ def main(cfg):
                 if show_corr:
                     # Force calc if not done by loss
                     view0=aug_set[0]
+                    target_0 = view0['image']
 
                     if use_alignment:
-                        grid_pred_0, (dx_0, dy_0) = losses.compute_predicted_alignment(pred_canonical, view0['image'])
+                        grid_pred_0, (dx_0, dy_0) = losses.compute_predicted_alignment(pred_canonical, target_0)
                         grid_pred_0 = grid_pred.to(pred_canonical.dtype)
                         # print(grid_pred_0)
                         pred_viz = F.grid_sample(pred_canonical, grid_pred_0, align_corners=True, padding_mode="zeros")
@@ -273,7 +277,7 @@ def main(cfg):
                         caption_suffix = ""
                         
                     if losses.latest_corr_data is None:
-                        losses.compute_for_visualization(pred_viz, view0['image'])
+                        losses.compute_for_visualization(pred_viz, target_0)
                     
                     if losses.latest_corr_data is not None:
                         cdata = losses.latest_corr_data
@@ -281,7 +285,7 @@ def main(cfg):
                         
                         # A. Lines
                         lines_img = draw_correspondence_lines(
-                            pred_viz, view0['image'], 
+                            pred_viz, target_0, 
                             cdata['match_B'], 
                             cdata['WA'], cdata['HA'], cdata['WB'], cdata['HB'],
                             num_samples=40
@@ -289,22 +293,28 @@ def main(cfg):
                         viz_dict["images/corr_lines"] = wandb.Image(lines_img, caption=f"Blue:Pred, Red:Aug (dx:{params0['dx']:.3f} dy:{params0['dy']:.3f})")
 
                         # B. Error Map
-                        if abs(params0['dx']) > 0 or abs(params0['dy']) > 0:
-                            err_arr = compute_correspondence_error_map(
-                                cdata['match_B'], 
-                                cdata['WA'], cdata['HA'], cdata['WB'], cdata['HB'],
-                                cdata['patch_size'], 
-                                params0['dx'], params0['dy']
-                            )
-                            
-                            err_max = err_arr.max()
-                            err_mean = err_arr.mean()
-                            
-                            err_heatmap = render_heatmap_from_array(err_arr, vmax=100, cmap="inferno")
-                            viz_dict["images/corr_error_map"] = wandb.Image(
-                                err_heatmap, 
-                                caption=f"Patch Error (px) | Max: {err_max:.1f}, Mean: {err_mean:.1f}"
-                            )
+                        # if abs(params0['dx']) > 0 or abs(params0['dy']) > 0:
+                        err_arr = compute_correspondence_error_map(
+                            cdata['match_B'], 
+                            cdata['WA'], cdata['HA'], cdata['WB'], cdata['HB'],
+                            cdata['patch_size'], 
+                            params0['dx'], params0['dy']
+                        )
+                        
+                        err_max = err_arr.max()
+                        err_mean = err_arr.mean()
+                        
+                        err_heatmap = render_heatmap_from_array(err_arr, vmax=50, cmap="inferno")
+                        viz_dict["images/corr_error_map"] = wandb.Image(
+                            err_heatmap, 
+                            caption=f"Patch Error (px) | Max: {err_max:.1f}, Mean: {err_mean:.1f}"
+                        )
+                        
+                        frank_img = losses.get_frankenstein_target(target_0)
+                        viz_dict["images/frankenstein_target"] = wandb.Image(
+                            frank_img.squeeze(0),
+                            caption="Frankenstein Target (Matched Patches)"
+                        )
 
                 wandb.log(viz_dict, step=step+1)
 

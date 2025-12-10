@@ -1,6 +1,7 @@
  # training
 seed: 42
 epochs: 500
+# epochs: 200
 # lr: 1e-3
 lr: 3e-4
 project_root: "/home/minsukc/SIO" # NOTE: Change accordingly
@@ -9,8 +10,8 @@ exp_name: "exp"
 wandb_project: "Single-Image-Optimization"
 
 viz:
-    viz_every: 50
-    # viz_every: 10
+    # viz_every: 50
+    viz_every: 10
     correspondence: True
 
 # data
@@ -18,9 +19,9 @@ viz:
 # image_path: "/home/minsukc/SIO/data/ct_chest_1_resized_512x451.jpeg" 
 # image_path: "/home/minsukc/SIO/data/ct_chest_1_resized_1024x902.jpeg"
 # image_path: "/home/minsukc/SIO/data/ct_chest_1_resized_1024x902.jpeg"
-# image_path: "/home/minsukc/SIO/data/ct_chest_2_resized_1024x1024.png" 
+image_path: "/home/minsukc/SIO/data/ct_chest_2_resized_1024x1024.png" 
 # image_path: "/home/minsukc/SIO/data/ct_chest_2_resized_512x512.png" 
-image_path: "/home/minsukc/SIO/data/ct_chest_2_resized_256x256.png" 
+# image_path: "/home/minsukc/SIO/data/ct_chest_2_resized_256x256.png" 
 normalize_to: "0_1" # "0_1" or "-1_1"
 
 # tcnn config
@@ -44,9 +45,14 @@ hash:
 # augmentation
 augment:
   # --- Spatial Augmentations ---
-  mode: "fixed" # fixed, infinite
+  # mode: "infinite" # fixed, infinite, single_fixed
+  mode: "fixed" 
   num_views: 10
-  # TODO: change to percentage of image, not raw pixel translation?
+  # mode: "single_fixed" 
+  # fixed_dx: 16
+  # fixed_dy: 16
+  fixed_dx: 16
+  fixed_dy: 0
   
   # Rotation
   prob_rotation: 0.0          
@@ -119,9 +125,9 @@ loss:
   sam_layer: 10  # which hidden layer to use
 
   # Correspondence loss
-  corr_weight: 0.0
+  # corr_weight: 0.0
   # corr_weight: 10.0
-  # corr_weight: 100.0
+  corr_weight: 100.0
   # corr_weight: 1000.0
   # corr_model: "facebook/dinov3-vits16-pretrain-lvd1689m"
   # corr_model: "facebook/dinov3-vits16plus-pretrain-lvd1689m"

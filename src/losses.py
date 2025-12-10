@@ -6,6 +6,7 @@ from pytorch_msssim import ssim
 from torchvision import models
 from transformers import AutoImageProcessor, AutoModel
 from PIL import Image
+import itertools
 
 class LossBundle:
     def __init__(self, cfg, device, lpips_fn=None):
@@ -18,6 +19,11 @@ class LossBundle:
         self.has_printed_patch_info = False
         self.patch_info = {}
         self.latest_corr_data = None 
+        
+        # --- Caching for Speed ---
+        # We store pre-computed target features so we don't re-run DINO 
+        # on the same static target images every epoch.
+        self.target_feat_cache = {} 
 
         # --- Normalization Constants (Differentiable) ---
         self.mean = torch.tensor([0.485, 0.456, 0.406], device=device).view(1, 3, 1, 1)
@@ -103,35 +109,106 @@ class LossBundle:
         mask_down = F.interpolate(mask, size=(grid_h, grid_w), mode='area')
         return mask_down.flatten(2).squeeze(1) > 0.5
 
+    # ==== Frankenstein Viz
+    def _unfold_to_patches(self, x):
+        """Unfolds [B, C, H, W] -> [B, N_patches, C, P, P]"""
+        patch = self.corr_patch_size
+        B, C, H, W = x.shape
+        kc, kh, kw = C, patch, patch
+        dc, dh, dw = C, patch, patch
+        # Unfold spatial dims
+        patches = x.unfold(2, kh, dh).unfold(3, kw, dw)
+        # Permute to gather spatial dims together
+        patches = patches.permute(0, 2, 3, 1, 4, 5)
+        # Flatten spatial dims to N_patches list
+        patches = patches.reshape(B, -1, C, patch, patch)
+        return patches
+
+    def _fold_from_patches(self, patches, H, W):
+        """Folds [B, N_patches, C, P, P] -> [B, C, H, W] assuming non-overlapping"""
+        patch = self.corr_patch_size
+        B, N, C, P, P = patches.shape
+        
+        Hf = H // patch
+        Wf = W // patch
+        
+        # [B, N, C, P, P] -> [B, Hf, Wf, C, P, P] (Restore Grid Structure)
+        patches = patches.reshape(B, Hf, Wf, C, P, P)
+        
+        # Permute to [B, C, Hf, P, Wf, P] (Interleave dimensions)
+        patches = patches.permute(0, 3, 1, 4, 2, 5)
+        
+        # Reshape to [B, C, H, W] (Flatten spatial axes)
+        img = patches.reshape(B, C, Hf * P, Wf * P)
+        return img
+
+    # The "Frankenstein" Visualization
+    @torch.no_grad()
+    def get_frankenstein_target(self, target_img):
+        """
+        Reconstructs what the Target looks like if we re-arrange its patches 
+        to match the Canonical Grid using the *latest* calculated correspondence.
+        
+        If this image looks jagged/blocky, the DINO grid is too coarse for the shift.
+        """
+        if self.latest_corr_data is None:
+            return torch.zeros_like(target_img)
+            
+        cdata = self.latest_corr_data
+        match_B = cdata['match_B'] # [N_patches] indices
+        
+        # 1. Break Target into Patches
+        patches_B = self._unfold_to_patches(target_img) # [1, N, C, P, P]
+        
+        # 2. Re-order patches according to match_B
+        # matches_B tells us: For canonical patch i, use target patch match_B[i]
+        matched_patches = patches_B[:, match_B] 
+        
+        # 3. Stitch back together into an image
+        H, W = target_img.shape[2], target_img.shape[3]
+        frank_img = self._fold_from_patches(matched_patches, H, W)
+        
+        return frank_img
+    
+    # Jittered Search
     @torch.no_grad()
     def compute_predicted_alignment(self, pred_img, target_img):
         """
-        Uses DINO to find the median shift between Pred and Target.
-        Returns a sampling grid that warps Pred to match Target.
+        Uses DINO to find the shift between Pred and Target.
+        Since data is now snapped to 16px grid, we do NOT need jittering.
+        We simply run DINO once and calculate the patch offset.
         """
         if self.corr_model is None:
             print("DINO model missing. Fallback to identity grid")
-            # Fallback identity grid if model missing
             B, C, H, W = pred_img.shape
             ys = torch.linspace(-1, 1, H, device=pred_img.device)
             xs = torch.linspace(-1, 1, W, device=pred_img.device)
             yy, xx = torch.meshgrid(ys, xs, indexing="ij")
             return torch.stack([xx, yy], dim=-1).unsqueeze(0), (0.0, 0.0)
 
-        # 1. Match
+        # 1. Caching check (Optimization)
+        cache_key = id(target_img)
+        fB = None
+        if cache_key in self.target_feat_cache:
+            fB = self.target_feat_cache[cache_key]
+        else:
+            fB, _, _ = self._extract_dino_patches_corr(target_img)
+            fB = F.normalize(fB, dim=-1)
+            self.target_feat_cache[cache_key] = fB
+
+        # 2. Extract Pred Features
         fA, HA, WA = self._extract_dino_patches_corr(pred_img)
-        fB, HB, WB = self._extract_dino_patches_corr(target_img)
         fA = F.normalize(fA, dim=-1)
-        fB = F.normalize(fB, dim=-1)
-        sim = torch.matmul(fA, fB.transpose(1, 2)) 
-        match_B = self._compute_correspondence_vectorized(sim[0], WA, HA, WB, HB, r=self.corr_search_r)
         
-        # 2. Calculate Median Shift
+        # 3. Standard Matching
+        sim = torch.matmul(fA, fB.transpose(1, 2)) 
+        match_B = self._compute_correspondence_vectorized(sim[0], WA, HA, WA, HA, r=self.corr_search_r)
+        
         device = pred_img.device
         yA = torch.arange(HA, device=device).repeat_interleave(WA) 
         xA = torch.arange(WA, device=device).repeat(HA)
-        yB = match_B // WB
-        xB = match_B % WB
+        yB = match_B // WA
+        xB = match_B % WA
         
         dx_px = (xB - xA) * self.corr_patch_size
         dy_px = (yB - yA) * self.corr_patch_size
@@ -139,10 +216,14 @@ class LossBundle:
         median_dx = torch.median(dx_px).item()
         median_dy = torch.median(dy_px).item()
         
-        # 3. Build Grid (Logic matches aug.py)
+        # 4. Total Shift (Just Coarse)
+        total_dx = median_dx 
+        total_dy = median_dy 
+        
+        # 5. Grid
         B, C, H, W = pred_img.shape
-        tx = 2.0 * median_dx / (W - 1)
-        ty = 2.0 * median_dy / (H - 1)
+        tx = 2.0 * total_dx / (W - 1)
+        ty = 2.0 * total_dy / (H - 1)
         
         ys_grid = torch.linspace(-1, 1, H, device=device)
         xs_grid = torch.linspace(-1, 1, W, device=device)
@@ -152,7 +233,14 @@ class LossBundle:
         trans_vec = torch.tensor([tx, ty], device=device).view(1, 1, 1, 2)
         grid = base_grid - trans_vec
         
-        return grid, (median_dx, median_dy)
+        self.latest_corr_data = {
+            "match_B": match_B.detach(),
+            "WA": WA, "HA": HA, "WB": WA, "HB": HA,
+            "patch_size": self.corr_patch_size
+        }
+        
+        return grid, (total_dx, total_dy)
+
 
     # --- STANDARD LOSSES ---
     def pixel_loss(self, pred_img, target_img, mask=None):

@@ -71,7 +71,7 @@ def add_salt_pepper(img, prob=0.05, low_val=0.0, high_val=1.0):
     I_noisy[mask > 1 - prob / 2] = high_val
     return I_noisy
 
-def generate_augmented_view(cfg,img):
+def generate_augmented_view(cfg, img, fixed_params = None):
     """
     Generates a single augmented view (Image + Mask + Grid).
     """
@@ -113,14 +113,25 @@ def generate_augmented_view(cfg,img):
             aug_cfg.get("warp_resolution", 16),
             device
         )
-        
-    if random.random() < aug_cfg.get("prob_translation", 0.0):
+
+
+    if fixed_params and "dx" in fixed_params:
+        dx, dy = fixed_params["dx"], fixed_params["dy"]
+        aug_params["dx"] = dx
+        aug_params["dy"] = dy
+        grid = _get_translation_grid(grid, dx, dy, device)
+        print("[Aug] PARAMETER FIXED TO DX, DY")
+    elif random.random() < aug_cfg.get("prob_translation", 0.0):
         frac = aug_cfg.get("translation_frac_max",0.0)
         # Example: frac=0.05 means range [-5% W, +5% W]
         limit_x = frac * W
         limit_y = frac * H
         dx = random.uniform(-limit_x, limit_x)
         dy = random.uniform(-limit_y, limit_y)
+        
+        dx = round(dx / 16.0) * 16.0 # FIX AUGMENTATIONS TO BE MULTIPLE OF 16. FOR JITTERING EXPERIMENT
+        dy = round(dy / 16.0) * 16.0
+        
         aug_params["dx"] = dx
         aug_params["dy"] = dy
         grid = _get_translation_grid(grid, dx, dy, device)
@@ -197,3 +208,31 @@ class InfiniteAugmentations:
 
     def __len__(self):
         return self.num_views
+
+
+class SingleFixedAugmentation:
+    """
+    Generates strictly ONE fixed view for overfitting tests.
+    """
+    def __init__(self, cfg, clean_img, num_views=1):
+        self.cfg = cfg
+        self.clean_img = clean_img
+        self.num_views = 1 # Ignore config num_views
+        
+        # Read explicit override params from config
+        self.fixed_params = {
+            "dx": cfg["augment"].get("fixed_dx", 0.0),
+            "dy": cfg["augment"].get("fixed_dy", 0.0),
+        }
+        
+        print(f"[Aug] Initialized SINGLE FIXED augmentation: {self.fixed_params}")
+        
+        # Generate it once
+        self.view = generate_augmented_view(self.cfg, self.clean_img, fixed_params=self.fixed_params)
+        self.average_img = self.view['image']
+
+    def __getitem__(self, idx):
+        return self.view
+
+    def __len__(self):
+        return 1
