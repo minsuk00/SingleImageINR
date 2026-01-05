@@ -13,7 +13,9 @@ from tqdm.auto import tqdm
 import os
 import wandb
 import gc
+import copy
 # import tinycudann as tcnn
+from feature_communicator import FeatureCommunicator
 
 def set_seed(seed=42):
     torch.manual_seed(seed)
@@ -179,7 +181,7 @@ class MatchingHead(nn.Module):
 
 # Augmentation Manager 
 class AugmentationManager:
-    def __init__(self, infinite=False, num_fixed=10, max_shift=15.0, H=256, W=256, device="cuda", aug_mode="rigid", elastic_alpha=0.1):
+    def __init__(self, infinite=False, num_fixed=10, max_shift=15.0, H=256, W=256, device="cuda", aug_mode="rigid", elastic_alpha=0.1, elastic_grid_res = 6):
         self.infinite = infinite
         self.max_shift = max_shift
         self.H = H
@@ -187,6 +189,7 @@ class AugmentationManager:
         self.device = device
         self.aug_mode = aug_mode
         self.elastic_alpha = elastic_alpha  # Scale of deformation
+        self.elastic_grid_res = elastic_grid_res
         
         # 고정된 Augmentation 미리 생성
         self.fixed_transforms = []
@@ -203,7 +206,8 @@ class AugmentationManager:
 
         elif self.aug_mode == "elastic":
             # 1. Create coarse random vectors (e.g. 4x4 or 8x8 grid)
-            grid_h, grid_w = 6, 6
+            # grid_h, grid_w = 6, 6
+            grid_h, grid_w = self.elastic_grid_res, self.elastic_grid_res
             # Random offsets in range [-1, 1] * alpha
             coarse_flow = (torch.rand(1, 2, grid_h, grid_w, device=self.device) - 0.5) * 2 * self.elastic_alpha
 
@@ -249,14 +253,34 @@ class JointTrainer:
         if self.use_corr:
             self.dino = AutoModel.from_pretrained('facebook/dinov3-vits16-pretrain-lvd1689m').to(device).eval()
             for p in self.dino.parameters(): p.requires_grad = False
-            # self.head = MatchingHead().to(device)
-            self.head_ref = MatchingHead().to(device)
-            self.head_mov = MatchingHead().to(device)
+
+            # Encoder (DINOv2-S) = 384
+            # Decoder (ViT-Base) = 768
+            dim_enc = 384
+            dim_dec = 768
+            dim_total = dim_enc + dim_dec # 1152
+            
+            # Initialize Communication Module
+            self.communicator = FeatureCommunicator(
+                input_dim=dim_enc, 
+                embed_dim=dim_dec, 
+                depth=2, 
+                num_heads=8
+                # depth=6, 
+                # num_heads=12
+                # depth=12, 
+                # num_heads=12
+            ).to(device)
+            
+            # Heads now take (Enc + Dec) dimension
+            self.head_ref = MatchingHead(input_dim=dim_total).to(device)
+            self.head_mov = MatchingHead(input_dim=dim_total).to(device)
             
             # Optimizer for Head + INR
             self.optimizer = torch.optim.Adam([
                 {'params': self.inr.parameters(), 'lr': config["lr_inr"]},
                 # {'params': self.head.parameters(), 'lr': config["lr_head"]}
+                {'params': self.communicator.parameters(), 'lr': config["lr_head"]}, 
                 {'params': self.head_ref.parameters(), 'lr': config["lr_head"]},
                 {'params': self.head_mov.parameters(), 'lr': config["lr_head"]}
             ])
@@ -281,6 +305,7 @@ class JointTrainer:
             device=device,
             aug_mode=config["aug_mode"], 
             elastic_alpha=config["elastic_alpha"],
+            elastic_grid_res = config["elastic_grid_res"],
         )
         self.latest_viz_data = {}
 
@@ -302,6 +327,22 @@ class JointTrainer:
             return self.head_mov(patch_feats, H, W)
         else:
             return self.head_ref(patch_feats, H, W)
+
+    # Helper to get raw DINO tokens (Before Communication)
+    def get_backbone_feats(self, img):
+        B, C, H, W = img.shape
+        img_3ch = img.repeat(1, 3, 1, 1)
+        img_norm = (img_3ch - self.mean) / self.std
+        
+        H_grid = H // 16
+        W_grid = W // 16
+        num_patches = H_grid * W_grid
+        
+        with torch.no_grad():
+            out = self.dino(pixel_values=img_norm, output_hidden_states=True)
+            patch_feats = out.last_hidden_state[:, -num_patches:, :] # [B, N, 384]
+
+        return patch_feats
     
     def train_step(self, clean_img, step):
         self.optimizer.zero_grad()
@@ -361,8 +402,25 @@ class JointTrainer:
         if self.use_corr:
             # --- C. InfoNCE & Alignment ---
             # Use separate heads for Pred (Ref) and Target (Mov)
-            desc_pred = self.extract_desc(pred_img, is_moving=False)
-            desc_target = self.extract_desc(target_img, is_moving=True)
+            # desc_pred = self.extract_desc(pred_img, is_moving=False)
+            # desc_target = self.extract_desc(target_img, is_moving=True)
+
+            # 1. Get Encoder Features (DINO)
+            enc_pred = self.get_backbone_feats(pred_img)   # [B, N, 384]
+            enc_targ = self.get_backbone_feats(target_img) # [B, N, 384]
+            
+            # 2. Decoder (Communication)
+            # Returns only the DECODER outputs
+            dec_pred, dec_targ = self.communicator(enc_pred, enc_targ) # [B, N, 768]
+            
+            # 3. Concatenate (Skip Connection)
+            # cat([384, 768]) -> 1152
+            feats_pred = torch.cat([enc_pred, dec_pred], dim=-1)
+            feats_targ = torch.cat([enc_targ, dec_targ], dim=-1)
+            
+            # 4. Heads (using concatenated features)
+            desc_pred = self.head_ref(feats_pred, H, W)
+            desc_target = self.head_mov(feats_targ, H, W)
             
             # (1) InfoNCE Loss
             # GT Transformation에 의해 매칭된 좌표만 짝꿍(Positive)이고 나머지는 전부 가짜(Negative)로 취급
@@ -486,6 +544,7 @@ class JointTrainer:
             # logs["Train/GradNorm_Head"] = get_grad_norm(self.head)
             logs["Train/GradNorm_HeadRef"] = get_grad_norm(self.head_ref)
             logs["Train/GradNorm_HeadMov"] = get_grad_norm(self.head_mov)
+            logs["Train/GradNorm_Comm"] = get_grad_norm(self.communicator)
         
         self.optimizer.step()
         logs["Loss/Total"] = total_loss.item()
@@ -539,8 +598,23 @@ class JointTrainer:
         B, C, H, W = pred.shape
         # desc_pred = self.extract_desc(pred)   # [1, 24, H, W]
         # desc_target = self.extract_desc(target) # [1, 24, H, W]
-        desc_pred = self.extract_desc(pred, is_moving=False)
-        desc_target = self.extract_desc(target, is_moving=True)
+        # desc_pred = self.extract_desc(pred, is_moving=False)
+        # desc_target = self.extract_desc(target, is_moving=True)
+
+        # 1. Get Features 
+        enc_pred = self.get_backbone_feats(pred)
+        enc_targ = self.get_backbone_feats(target)
+        
+        # 2. Communicate
+        dec_pred, dec_targ = self.communicator(enc_pred, enc_targ)
+        
+        # 3. Concatenate
+        feats_pred = torch.cat([enc_pred, dec_pred], dim=-1)
+        feats_targ = torch.cat([enc_targ, dec_targ], dim=-1)
+        
+        # 4. Heads
+        desc_pred = self.head_ref(feats_pred, H, W)
+        desc_target = self.head_mov(feats_targ, H, W)
         
         flat_pred = desc_pred.view(24, -1).T  # [HW, 24]
         flat_target = desc_target.view(24, -1).T # [HW, 24]
@@ -674,6 +748,8 @@ class JointTrainer:
         # Warping: where did pixels move?
         # Sample from canonical grid at (p + flow)
         warped = F.grid_sample(grid_torch, base + norm_flow, align_corners=False)
+        # warped = F.grid_sample(grid_torch, base + norm_flow, mode='nearest', align_corners=False)
+        
         return warped[0, 0].cpu().numpy() 
     
     def visualize(self):
@@ -754,14 +830,14 @@ class JointTrainer:
         # --- Row 2: Jacobian & Warped Grid ---
         # GT Jacobian (Grayscale)
         im_gt_jac = axes[1,0].imshow(gt_jac, cmap='gray', vmin=0, vmax=2)
-        axes[1,0].set_title(f"GT Jac (Folds: {gt_fold_perc:.2f}%)")
+        axes[1,0].set_title(f"GT Jac Det (Folds: {gt_fold_perc:.2f}%)")
         plt.colorbar(im_gt_jac, ax=axes[1,0], fraction=0.046, pad=0.04)
         # Pred Jacobian (Grayscale + Red Mask Overlay)
         im_pred_jac = axes[1,1].imshow(pred_jac, cmap='gray', vmin=0, vmax=2)
         fold_mask = (pred_jac <= 0).astype(float)
         masked_red = np.ma.masked_where(fold_mask == 0, fold_mask)
         axes[1,1].imshow(masked_red, cmap=mcolors.ListedColormap(['red']), alpha=1.0)
-        axes[1,1].set_title(f"Pred Jac (Red = Folding) (Folds: {pred_fold_perc:.2f}%)")
+        axes[1,1].set_title(f"Pred Jac Det (Red = Folding) (Folds: {pred_fold_perc:.2f}%)")
         plt.colorbar(im_pred_jac, ax=axes[1,1], fraction=0.046, pad=0.04)
         axes[1,2].imshow(gt_warped_grid, cmap='gray')
         axes[1,2].set_title("GT Distortion Grid")
@@ -808,7 +884,7 @@ def run_experiment(exp_config):
     
     # 1. Setup WandB with unique name
     mask_str = "mask" if exp_config.get("use_border_mask", False) else "nomask"
-    # NEW: Updated run name to include aug_mode
+    # Updated run name to include aug_mode
     aug_str = exp_config.get('aug_mode', 'rigid')
     run_name = f"res{exp_config['res']}_{exp_config['model_type']}_{'corr' if exp_config['use_correspondence'] else 'naive'}_{aug_str}_{mask_str}"
     
@@ -870,66 +946,42 @@ common_config = {
     "wandb": True,
     # "wandb": False,
     # "epochs": 4001,
-    # "epochs": 20001,
-    "epochs": 50001,
-    # "epochs": 10001,
-    # "epochs": 501,
+    # "epochs": 50001,
+    "epochs": 20001,
     # "lr_inr": 1e-3,
     "lr_inr": 5e-4,
-    # "lr_head": 1e-4,
     "lr_head": 5e-4,
     # "infinite_augmentation": True,
     "infinite_augmentation": False,
     "num_aug": 10,
     "w_align": 1.0,
     "w_naive": 0.0,
-    "elastic_alpha": 0.05,
+    "elastic_alpha": 0.1, # 0.05, 0.1
+    "elastic_grid_res": 6, # 6, 12
+    "res": 256, # 256, 512
+    "model_type": "fourier",
+    "shift_ratio": 0.40, # 0.10, 0.40
+    "use_correspondence": True, # "corr", "naive"
+    "use_border_mask": False,
+    "aug_mode": "elastic", # "elastic", "rigid"
 }
 
-# Variable settings
-# resolutions = [256, 512, 1024]
-# resolutions = [256, 512] # 1024 CUDA OOM
-resolutions = [256]
-model_types = ["fourier"] 
-shift_ratios = [0.40] # 5% shift, 10% shift
-# shift_ratios = [0.10, 0.40] # 5% shift, 10% shift
-elastic_alpha = [0.1]
-# elastic_alpha = [0.05, 0.1]
-# modes = ["naive", "corr"] 
-# modes = ["corr", "naive"] 
-modes = ["corr"] 
-# modes = ["naive"] 
-# mask_options = [True, False] 
-mask_options = [False] 
-# aug_modes = ["elastic", "rigid"] 
-aug_modes = ["elastic"] 
+experiment_updates = [
+    # {"elastic_alpha": 0.05, "elastic_grid_res": 12},
+    {"elastic_alpha": 0.05, "elastic_grid_res": 30},
+    # {"elastic_alpha": 0.1, "elastic_grid_res": 6},
+    # {"elastic_alpha": 0.1, "elastic_grid_res": 25},
+    # {"use_correspondence": False},
+]
 
-
-# Generate List of Experiments
-experiment_queue = []
-
-for res in resolutions:
-    for shift_r in shift_ratios:
-        for mode in modes:
-            for model in model_types:
-                for use_mask in mask_options:
-                    for aug in aug_modes:
-                        for alpha in elastic_alpha:
-                            # Create specific config
-                            cfg = common_config.copy()
-                            cfg["res"] = res
-                            cfg["model_type"] = model
-                            cfg["shift_ratio"] = shift_r
-                            cfg["use_correspondence"] = (mode == "corr")
-                            cfg["use_border_mask"] = use_mask
-                            cfg["aug_mode"] = aug 
-                            cfg["elastic_alpha"] = alpha
-        
-                            experiment_queue.append(cfg)
-
-print(f"Queued {len(experiment_queue)} experiments.")
-
-# Run them all
-for i, exp_cfg in enumerate(experiment_queue):
-    print(f"Running {i+1}/{len(experiment_queue)}")
+print(f"Total experiments to run: {len(experiment_updates)}")
+for i, update in enumerate(experiment_updates):
+    # exp_cfg = common_config.copy()
+    exp_cfg = copy.deepcopy(common_config)
+    exp_cfg.update(update) # automatically replaces values in common_config
+    
+    print(f"\n--- Running Experiment {i+1}/{len(experiment_updates)} ---")
+    print(f"DEBUG: Active overrides: {update}")
+    
     run_experiment(exp_cfg)
+
