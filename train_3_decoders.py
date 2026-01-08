@@ -251,12 +251,22 @@ class JointTrainer:
             self.inr = SimpleINR().to(device)
         
         if self.use_corr:
-            self.dino = AutoModel.from_pretrained('facebook/dinov3-vits16-pretrain-lvd1689m').to(device).eval()
+            dim_enc = -1
+            if config["encoder"] == "dinov3-vits":
+                self.dino = AutoModel.from_pretrained('facebook/dinov3-vits16-pretrain-lvd1689m').to(device).eval()
+                dim_enc = 384
+            elif config["encoder"] == "dinov3-vitb":
+                self.dino = AutoModel.from_pretrained('facebook/dinov3-vitb16-pretrain-lvd1689m').to(device).eval()
+                dim_enc = 768
+            else:
+                raise Exception("encoder not found...")
+            
             for p in self.dino.parameters(): p.requires_grad = False
 
-            # Encoder (DINOv2-S) = 384
+            # Encoder (DINOv3-S) = 384
             # Decoder (ViT-Base) = 768
-            dim_enc = 384
+            # dim_enc = 384
+            # dim_enc = 768
             dim_dec = 768
             dim_total = dim_enc + dim_dec # 1152
             
@@ -264,6 +274,7 @@ class JointTrainer:
             self.communicator = FeatureCommunicator(
                 input_dim=dim_enc, 
                 embed_dim=dim_dec, 
+                grid_size=(config['res']//16, config['res']//16),
                 depth=2, 
                 num_heads=8
                 # depth=6, 
@@ -964,11 +975,15 @@ common_config = {
     "use_correspondence": True, # "corr", "naive"
     "use_border_mask": False,
     "aug_mode": "elastic", # "elastic", "rigid"
+    "encoder": "dinov3-vits", # "dinov3-vits", "dinov3-vitb"
 }
 
 experiment_updates = [
-    # {"elastic_alpha": 0.05, "elastic_grid_res": 12},
-    {"elastic_alpha": 0.05, "elastic_grid_res": 30},
+    # {"elastic_alpha": 0.1, "elastic_grid_res": 6}, # default
+    {"elastic_alpha": 0.05, "elastic_grid_res": 30, "use_correspondence": True, "epochs": 30001, "encoder": "dinov3-vits"},
+    {"elastic_alpha": 0.05, "elastic_grid_res": 30, "use_correspondence": False, "epochs": 30001, "encoder": "dinov3-vits"},
+    {"elastic_alpha": 0.05, "elastic_grid_res": 30, "use_correspondence": True, "epochs": 30001, "encoder": "dinov3-vitb"},
+    {"elastic_alpha": 0.05, "elastic_grid_res": 30, "use_correspondence": False, "epochs": 30001, "encoder": "dinov3-vitb"},
     # {"elastic_alpha": 0.1, "elastic_grid_res": 6},
     # {"elastic_alpha": 0.1, "elastic_grid_res": 25},
     # {"use_correspondence": False},

@@ -4,6 +4,52 @@ import torch.nn as nn
 from functools import partial
 import collections.abc
 from itertools import repeat
+import numpy as np
+
+# --- 2D Sin-Cos Positional Embedding Helpers ---
+def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
+    """
+    embed_dim: output dimension for each position
+    pos: [H*W] list of positions to be encoded
+    """
+    assert embed_dim % 2 == 0
+    omega = np.arange(embed_dim // 2, dtype=np.float32)
+    omega /= embed_dim / 2.
+    omega = 1. / 10000**omega  # (D/2,)
+
+    pos = pos.reshape(-1)  # (M,)
+    out = np.einsum('m,d->md', pos, omega)  # (M, D/2), outer product
+
+    emb_sin = np.sin(out) # (M, D/2)
+    emb_cos = np.cos(out) # (M, D/2)
+
+    emb = np.concatenate([emb_sin, emb_cos], axis=1)  # (M, D)
+    return emb
+
+def get_2d_sincos_pos_embed_from_grid(embed_dim, grid):
+    assert embed_dim % 2 == 0
+    # use half of dimensions to encode grid_h
+    emb_h = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid[0])  # (H*W, D/2)
+    # use half of dimensions to encode grid_w
+    emb_w = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid[1])  # (H*W, D/2)
+
+    emb = np.concatenate([emb_h, emb_w], axis=1) # (H*W, D)
+    return emb
+
+def get_2d_sincos_pos_embed(embed_dim, grid_size):
+    """
+    grid_size: tuple (height, width) of the grid
+    return:
+    pos_embed: [grid_size[0]*grid_size[1], embed_dim]
+    """
+    grid_h = np.arange(grid_size[0], dtype=np.float32)
+    grid_w = np.arange(grid_size[1], dtype=np.float32)
+    grid = np.meshgrid(grid_w, grid_h)  # here w goes first
+    grid = np.stack(grid, axis=0)
+
+    grid = grid.reshape([2, 1, grid_size[0], grid_size[1]])
+    pos_embed = get_2d_sincos_pos_embed_from_grid(embed_dim, grid)
+    return pos_embed
 
 # --- Helpers ---
 def _ntuple(n):
@@ -141,17 +187,21 @@ class FeatureCommunicator(nn.Module):
     Implements the asymmetric communication between two images (Ref and Mov).
     Matches ViT-Base specifications: 768 dim, 12 heads, 12 layers.
     """
-    def __init__(self, input_dim=384, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4):
+    def __init__(self, input_dim=384, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, grid_size=(16, 16)):
         super().__init__()
-        print(f"NEW: Initializing FeatureCommunicator (ViT-Base Sized: dim={embed_dim}, depth={depth})")
+        print(f"Initializing FeatureCommunicator (SinCos PosEmbed, dim={embed_dim}, depth={depth}, grid={grid_size})")
         
         # 1. Projection from DINO dimension (384) to Decoder dimension (768)
         self.enc_to_dec = nn.Linear(input_dim, embed_dim)
+        self.grid_size = grid_size
         
         # 2. Absolute Positional Embeddings (Standard ViT style)
         # We assume max 256 patches (16x16) for now, but making it larger to be safe (e.g. 1024 for 32x32)
-        self.pos_embed = nn.Parameter(torch.zeros(1, 1024, embed_dim)) 
-        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+        # self.pos_embed = nn.Parameter(torch.zeros(1, 1024, embed_dim)) 
+        # nn.init.trunc_normal_(self.pos_embed, std=0.02)
+        
+        pos_embed = get_2d_sincos_pos_embed(embed_dim, grid_size)
+        self.register_buffer('pos_embed', torch.from_numpy(pos_embed).float().unsqueeze(0)) # [1, H*W, D]
         
         norm_layer = partial(nn.LayerNorm, eps=1e-6)
         
@@ -184,9 +234,13 @@ class FeatureCommunicator(nn.Module):
         
         # Add Positional Embeddings
         # Slice pos_embed to current sequence length N
-        pos = self.pos_embed[:, :N, :]
-        f_ref = f_ref + pos
-        f_mov = f_mov + pos
+        # pos = self.pos_embed[:, :N, :]
+        # f_ref = f_ref + pos
+        # f_mov = f_mov + pos
+        # NOTE: We assume input N matches our pre-calculated grid size (16*16=256)
+        # NOTE: If dynamic sizes are needed, interpolation would be added here.
+        f_ref = f_ref + self.pos_embed
+        f_mov = f_mov + self.pos_embed
         
         # Communication Loop
         # We update them in parallel layers, swapping context
