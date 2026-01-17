@@ -1,15 +1,28 @@
-# training
+ # training
 seed: 42
-epochs: 1000
-lr: 1e-3
-viz_every: 200
+epochs: 500
+# epochs: 200
+# lr: 1e-3
+lr: 3e-4
+project_root: "/home/minsukc/SIO" # NOTE: Change accordingly
 out_dir: "runs/debug"
-exp_name: "exp1_ct_head"
+exp_name: "exp"
 wandb_project: "Single-Image-Optimization"
 
+viz:
+    # viz_every: 50
+    viz_every: 10
+    correspondence: True
+
 # data
-image_path: "data/Chest_CT_3.png"  # grayscale PNG or JPG
-normalize_to: "0_1"        # "0_1" or "-1_1"
+# image_path: "/home/minsukc/SIO/data/ct_chest_1.jpeg"
+# image_path: "/home/minsukc/SIO/data/ct_chest_1_resized_512x451.jpeg" 
+# image_path: "/home/minsukc/SIO/data/ct_chest_1_resized_1024x902.jpeg"
+# image_path: "/home/minsukc/SIO/data/ct_chest_1_resized_1024x902.jpeg"
+image_path: "/home/minsukc/SIO/data/ct_chest_2_resized_1024x1024.png" 
+# image_path: "/home/minsukc/SIO/data/ct_chest_2_resized_512x512.png" 
+# image_path: "/home/minsukc/SIO/data/ct_chest_2_resized_256x256.png" 
+normalize_to: "0_1" # "0_1" or "-1_1"
 
 # tcnn config
 hash:
@@ -18,7 +31,7 @@ hash:
     type: "Hash"
     n_levels: 12
     n_features_per_level: 4
-    log2_hashmap_size: 21
+    log2_hashmap_size: 20
     base_resolution: 16
     per_level_scale: 1.5
     interpolation: "Linear"
@@ -31,10 +44,41 @@ hash:
 
 # augmentation
 augment:
-  prob_translation: 1
-  translation_px_max: 4
+  # --- Spatial Augmentations ---
+  # mode: "infinite" # fixed, infinite, single_fixed
+  mode: "fixed" 
+  num_views: 10
+  # mode: "single_fixed" 
+  # fixed_dx: 16
+  # fixed_dy: 16
+  fixed_dx: 16
+  fixed_dy: 0
+  
+  # Rotation
+  prob_rotation: 0.0          
+  rotation_deg_max: 15     
+  
+  # Shear (Linear Deformation)
+  prob_shear: 0.0            
+  shear_factor_max: 0.1    
+  
+  # Nonlinear Warping
+  prob_warp: 0.0       
+  warp_scale: 0.1         
+  warp_resolution: 16       
+  
+  # Translation (applied last)
+  prob_translation: 1.0      
+  # translation_px_max: 50
+  # translation_px_max: 32
+  # translation_px_max: 8
+  translation_frac_max: 0.05 # e.g., 1024 * 0.05 ≈ 51 => -51 ~ 51
+  # translation_frac_max: 0.3
+  
 
-  prob_gaussian: 1
+  # --- Noise Augmentations ---
+  # (Applied after spatial augmentations)
+  prob_gaussian: 0
   gaussian_sigma: 0.3
   gaussian_mean: 0.1
 
@@ -43,23 +87,57 @@ augment:
   speckle_mean: 0.02  
 
   prob_poisson: 0.0
-  poisson_scale: 10.0   # photon count scaling (higher = less noise)
+  poisson_scale: 10.0
   poisson_bias: 0.05
 
   prob_saltpepper: 0.0
-  saltpepper_prob: 0.05 # fraction of corrupted pixels
-  saltpepper_low: 0.0 # black pixels (pepper)
-  saltpepper_high: 1.0 # white pixels (salt)
+  saltpepper_prob: 0.05    
+  saltpepper_low: 0.0
+  saltpepper_high: 1.0
 
 # losses and weights
 loss:
+  use_warp_mask: true
+  # use_warp_mask: false
+  use_alignment_correction: false
+  # use_alignment_correction: true
+
   pixel: l1
   pixel_weight: 1.0
+  # pixel_weight: 0.0
+  # SSIM
   ssim_weight: 0.0
   ssim_window: 11
+  # LPIPS
   lpips_weight: 0.0
-  chess_weight: 0.5
+  # CheSS
+  chess_weight: 0.0
   chess_ckpt: "/home/minsukc/SIO/CheSS.pth.tar"
-  dino_weight: 0.0        # weight for DINOv3 perceptual loss (tune: 0.1–1.0 typical)
-  dino_model: "facebook/dinov3-convnext-tiny-pretrain-lvd1689m"  # or vitb16 version
-  dino_layer: "avg"       # optional: "avg" (mean patch feature) or "cls"
+  # DINOv3
+  dino_weight: 0.0
+  # dino_weight: 1.0
+  # dino_weight: 100.0
+  dino_model: "facebook/dinov3-vitb16-pretrain-lvd1689m"
+  dino_structure_weight: 0.0
+  # SAMv2
+  sam_weight: 0.0
+  sam_model: "facebook/sam2.1-hiera-small"
+  sam_layer: 10  # which hidden layer to use
+
+  # Correspondence loss
+  # corr_weight: 0.0
+  # corr_weight: 10.0
+  corr_weight: 100.0
+  # corr_weight: 1000.0
+  # corr_model: "facebook/dinov3-vits16-pretrain-lvd1689m"
+  # corr_model: "facebook/dinov3-vits16plus-pretrain-lvd1689m"
+  corr_model: "facebook/dinov3-vitb16-pretrain-lvd1689m"
+  # corr_model: "facebook/sam2.1-hiera-small"
+  corr_dino_layer: -1       # or -3
+  # corr_layer: -3
+  
+  corr_pixel_weight: 0.0
+  # corr_pixel_weight: 1.0
+  corr_search_r: 10
+  
+

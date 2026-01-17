@@ -2,6 +2,22 @@ __pycache__/
 data/
 wandb/
 runs/
+config/
 
+.DS_Store
+MedDINOv3/
+*.pth
+test.py
 NOTE.md
 *.tar
+NOTE.md
+test.py
+.DS_Store
+
+MedDINOv3/
+*.pth
+
+.vscode/
+*.pth.tar
+pyrightconfig.json
+.ipynb_checkpoints
