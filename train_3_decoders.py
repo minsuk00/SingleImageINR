@@ -962,8 +962,8 @@ common_config = {
     # "lr_inr": 1e-3,
     "lr_inr": 5e-4,
     "lr_head": 5e-4,
-    # "infinite_augmentation": True,
-    "infinite_augmentation": False,
+    "infinite_augmentation": True,
+    # "infinite_augmentation": False,
     "num_aug": 10,
     "w_align": 1.0,
     "w_naive": 0.0,
@@ -980,11 +980,11 @@ common_config = {
 
 experiment_updates = [
     # {"elastic_alpha": 0.1, "elastic_grid_res": 6}, # default
-    {"elastic_alpha": 0.05, "elastic_grid_res": 30, "use_correspondence": True, "epochs": 30001, "encoder": "dinov3-vits"},
-    {"elastic_alpha": 0.05, "elastic_grid_res": 30, "use_correspondence": False, "epochs": 30001, "encoder": "dinov3-vits"},
-    {"elastic_alpha": 0.05, "elastic_grid_res": 30, "use_correspondence": True, "epochs": 30001, "encoder": "dinov3-vitb"},
-    {"elastic_alpha": 0.05, "elastic_grid_res": 30, "use_correspondence": False, "epochs": 30001, "encoder": "dinov3-vitb"},
-    # {"elastic_alpha": 0.1, "elastic_grid_res": 6},
+    # {"elastic_alpha": 0.05, "elastic_grid_res": 30, "use_correspondence": True, "epochs": 30001, "encoder": "dinov3-vits"},
+    # {"elastic_alpha": 0.05, "elastic_grid_res": 30, "use_correspondence": False, "epochs": 30001, "encoder": "dinov3-vits"},
+    # {"elastic_alpha": 0.05, "elastic_grid_res": 30, "use_correspondence": True, "epochs": 30001, "encoder": "dinov3-vitb"},
+    # {"elastic_alpha": 0.05, "elastic_grid_res": 30, "use_correspondence": False, "epochs": 30001, "encoder": "dinov3-vitb"},
+    {"elastic_alpha": 0.05},
     # {"elastic_alpha": 0.1, "elastic_grid_res": 25},
     # {"use_correspondence": False},
 ]

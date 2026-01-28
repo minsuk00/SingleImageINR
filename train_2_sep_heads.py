@@ -878,8 +878,8 @@ common_config = {
     "lr_inr": 5e-4,
     # "lr_head": 1e-4,
     "lr_head": 5e-4,
-    # "infinite_augmentation": True,
-    "infinite_augmentation": False,
+    "infinite_augmentation": True,
+    # "infinite_augmentation": False,
     "num_aug": 10,
     "w_align": 1.0,
     "w_naive": 0.0,
@@ -893,7 +893,8 @@ resolutions = [256]
 model_types = ["fourier"] 
 shift_ratios = [0.40] # 5% shift, 10% shift
 # shift_ratios = [0.10, 0.40] # 5% shift, 10% shift
-elastic_alpha = [0.1]
+# elastic_alpha = [0.1]
+elastic_alpha = [0.05]
 # elastic_alpha = [0.05, 0.1]
 # modes = ["naive", "corr"] 
 # modes = ["corr", "naive"] 

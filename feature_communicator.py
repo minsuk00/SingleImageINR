@@ -189,7 +189,7 @@ class FeatureCommunicator(nn.Module):
     """
     def __init__(self, input_dim=384, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, grid_size=(16, 16)):
         super().__init__()
-        print(f"Initializing FeatureCommunicator (SinCos PosEmbed, dim={embed_dim}, depth={depth}, grid={grid_size})")
+        print(f"Initializing FeatureCommunicator (SinCos PosEmbed, dim={embed_dim}, depth={depth}, num_heads={num_heads}, grid={grid_size})")
         
         # 1. Projection from DINO dimension (384) to Decoder dimension (768)
         self.enc_to_dec = nn.Linear(input_dim, embed_dim)
