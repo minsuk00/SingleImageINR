@@ -984,7 +984,7 @@ experiment_updates = [
     # {"elastic_alpha": 0.05, "elastic_grid_res": 30, "use_correspondence": False, "epochs": 30001, "encoder": "dinov3-vits"},
     # {"elastic_alpha": 0.05, "elastic_grid_res": 30, "use_correspondence": True, "epochs": 30001, "encoder": "dinov3-vitb"},
     # {"elastic_alpha": 0.05, "elastic_grid_res": 30, "use_correspondence": False, "epochs": 30001, "encoder": "dinov3-vitb"},
-    {"elastic_alpha": 0.05},
+    {"elastic_alpha": 0.05, "epochs": 500001},
     # {"elastic_alpha": 0.1, "elastic_grid_res": 25},
     # {"use_correspondence": False},
 ]
