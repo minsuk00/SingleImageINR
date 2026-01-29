@@ -21,3 +21,4 @@ MedDINOv3/
 *.pth.tar
 pyrightconfig.json
 .ipynb_checkpoints
+*.pt
